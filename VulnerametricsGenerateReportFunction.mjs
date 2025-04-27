@@ -36,8 +36,8 @@ const LOGO_FILE_NAME = "vulnerametrics-logo-bw.png"; // Keep logo as requested
 const DISCLAIMER_TEXT = `Disclaimer: The information provided herein may be wrong and is for educational, research, and defensive purposes only. Any attempt to exploit vulnerabilities without proper authorization is illegal and unethical.`;
 const FOOTER_TEXT =
   "vulnerametrics.com was made by Miguel Cordero Pamphile => miguelcorderopamphile@gmail.com";
-const NVD_RETRY_ATTEMPTS = 3;
-const NVD_RETRY_DELAY_MS = 500;
+const NVD_RETRY_ATTEMPTS = 1;
+const NVD_RETRY_DELAY_MS = 200;
 const CACHE_DURATION_MS = 5 * 60 * 1000;
 
 // --- B&W PDF Styling Constants (Refined for No Boxes) ---
@@ -86,6 +86,7 @@ const s3Client = new S3Client({ region: AWS_REGION });
 // --- Cache ---
 let cachedNvdApiKey = null;
 let cacheNvdExpiry = null;
+let cachedLogoBytes = null;
 
 // --- Helper Functions ---
 
@@ -1126,29 +1127,25 @@ async function generatePdfReport(bedrockAnalysisData, cveId, relevantNvdData) {
     let logoWidth = 0;
     const logoScale = 0.1;
     try {
-      const __filename = fileURLToPath(import.meta.url);
-      const __dirname = path.dirname(__filename);
-      const logoPath = path.resolve(
-        process.env.LAMBDA_TASK_ROOT || __dirname,
-        LOGO_FILE_NAME
-      );
-      const logoBytes = await fs.readFile(logoPath);
-      const logoImage = await pdfDoc.embedPng(logoBytes);
-      const logoDims = logoImage.scale(logoScale);
-      logoHeight = logoDims.height;
-      logoWidth = logoDims.width;
-      const logoX = pdfContext.page.getWidth() - PDF_PAGE_MARGIN - logoWidth;
-      const logoBottomY = pageHeight - PDF_PAGE_MARGIN - logoHeight;
-      if (currentY < logoBottomY + 10) {
-        currentY = logoBottomY - 10;
+      const logoBytes = await getLogoBytes();
+      if (logoBytes) {
+        const logoImage = await pdfDoc.embedPng(logoBytes);
+        const logoDims = logoImage.scale(logoScale);
+        logoHeight = logoDims.height;
+        logoWidth = logoDims.width;
+        const logoX = pdfContext.page.getWidth() - PDF_PAGE_MARGIN - logoWidth;
+        const logoBottomY = pageHeight - PDF_PAGE_MARGIN - logoHeight;
+        if (currentY < logoBottomY + 10) {
+          currentY = logoBottomY - 10;
+        }
+        pdfContext.page.drawImage(logoImage, {
+          x: logoX,
+          y: logoBottomY,
+          width: logoWidth,
+          height: logoHeight,
+        });
+        currentY = Math.min(currentY, logoBottomY - 10);
       }
-      pdfContext.page.drawImage(logoImage, {
-        x: logoX,
-        y: logoBottomY,
-        width: logoWidth,
-        height: logoHeight,
-      });
-      currentY = Math.min(currentY, logoBottomY - 10);
     } catch (logoError) {
       console.error(
         `ERROR embedding logo: ${logoError.message}. Skipping logo.`
@@ -1537,6 +1534,21 @@ function formatErrorResponse(error, extraHeaders = {}) {
   };
 }
 
+// --- Load the logo only once outside the handler to leverage Lambda's warm context ---
+async function getLogoBytes() {
+  if (cachedLogoBytes) return cachedLogoBytes;
+  try {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const logoPath = path.resolve(process.env.LAMBDA_TASK_ROOT || __dirname, LOGO_FILE_NAME);
+    cachedLogoBytes = await fs.readFile(logoPath);
+    return cachedLogoBytes;
+  } catch (e) {
+    console.error("Failed to load logo:", e);
+    return null;
+  }
+}
+
 // --- Main Lambda Handler (Simplified CVSS logic path) ---
 export const handler = async (event, context) => {
   const requestId = context?.awsRequestId || "N/A";
@@ -1557,88 +1569,47 @@ export const handler = async (event, context) => {
   let userId = null;
   try {
     validateEnvironmentVariables();
-
     userId = event?.requestContext?.authorizer?.claims?.sub || event?.requestContext?.authorizer?.jwt?.claims?.sub;
     const cveIdInput = event?.pathParameters?.id;
-
-    if (!userId) {
-      throw {
-        statusCode: 403,
-        message: "Forbidden: User identifier missing or invalid token.",
-      };
-    }
-    if (!cveIdInput || !CVE_REGEX.test(cveIdInput)) {
-      throw {
-        statusCode: 400,
-        message: `Bad Request: Valid CVE ID required (e.g., CVE-YYYY-NNNN). Received: ${
-          cveIdInput || "nothing"
-        }`,
-      };
-    }
+    if (!userId) throw { statusCode: 403, message: "Forbidden: User identifier missing or invalid token." };
+    if (!cveIdInput || !CVE_REGEX.test(cveIdInput)) throw { statusCode: 400, message: `Bad Request: Valid CVE ID required (e.g., CVE-YYYY-NNNN). Received: ${cveIdInput || "nothing"}` };
     const cveId = cveIdInput.toUpperCase();
-    console.log(
-      `(RequestId: ${requestId}) Processing request for UserID: ${userId}, CVE ID: ${cveId}`
-    );
 
-    const hasCredits = await checkUserCredits(userId);
-    if (!hasCredits) {
-      throw {
-        statusCode: 402,
-        message: "Payment Required: Insufficient credits to generate report.",
-      };
-    }
-    console.log(
-      `(RequestId: ${requestId}) User ${userId} has sufficient credits.`
-    );
+    // Parallelize all possible async operations
+    const [nvdApiKey, logoBytes, hasCredits] = await Promise.all([
+      getNvdApiKey(),
+      getLogoBytes(),
+      checkUserCredits(userId)
+    ]);
+    if (!hasCredits) throw { statusCode: 402, message: "Payment Required: Insufficient credits to generate report." };
 
-    // Core Logic (CVSSv3 Focus)
-    const nvdApiKey = await getNvdApiKey();
     const rawVulnerabilityData = await fetchNvdData(cveId, nvdApiKey);
-    const relevantNvdData = extractRelevantNvdData(rawVulnerabilityData); // Now extracts only V3 or null
-    const bedrockPrompt = prepareBedrockPrompt(relevantNvdData); // Uses only V3 summary
+    const relevantNvdData = extractRelevantNvdData(rawVulnerabilityData);
+    const bedrockPrompt = prepareBedrockPrompt(relevantNvdData);
     const bedrockAnalysisData = await invokeBedrockAnalysis(bedrockPrompt);
-
-    await decrementUserCredits(userId); // Charge user
-
-    console.log(
-      `(RequestId: ${requestId}) Starting PDF generation (CVSSv3 Focus)...`
-    );
+    await decrementUserCredits(userId);
     const pdfBytes = await generatePdfReport(
       bedrockAnalysisData,
       cveId,
       relevantNvdData
-    ); // PDF generator uses relevantNvdData (with only cvssV3)
-    console.log(
-      `(RequestId: ${requestId}) PDF generation completed. Size: ${
-        pdfBytes?.length || 0
-      } bytes`
     );
-
     const timestamp = Date.now();
     const s3Key = `${REPORT_S3_PREFIX}${cveId}-${userId}-${timestamp}.pdf`;
     await uploadReportToS3(pdfBytes, s3Key);
-
     const successBody = {
       message: "Report generated successfully.",
       reportKey: s3Key,
       cveId: cveId,
       timestamp: new Date(timestamp).toISOString(),
     };
-    console.log(
-      `(RequestId: ${requestId}) --- Lambda Invocation End (Success) ---`
-    );
+    console.log(`(RequestId: ${requestId}) --- Lambda Invocation End (Success) ---`);
     return formatSuccessResponse(successBody, corsHeaders);
   } catch (error) {
-    console.error(
-      `(RequestId: ${requestId}) !!! OVERALL HANDLER ERROR:`,
-      error
-    );
+    console.error(`(RequestId: ${requestId}) !!! OVERALL HANDLER ERROR:`, error);
     if (!error.statusCode || error.statusCode >= 500) {
       console.error(`(RequestId: ${requestId}) Stack Trace:`, error.stack);
     }
-    console.log(
-      `(RequestId: ${requestId}) --- Lambda Invocation End (Error) ---`
-    );
+    console.log(`(RequestId: ${requestId}) --- Lambda Invocation End (Error) ---`);
     return formatErrorResponse(error, corsHeaders);
   }
 };
