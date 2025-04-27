@@ -1558,7 +1558,7 @@ export const handler = async (event, context) => {
   try {
     validateEnvironmentVariables();
 
-    userId = event?.requestContext?.authorizer?.jwt?.claims?.sub;
+    userId = event?.requestContext?.authorizer?.claims?.sub || event?.requestContext?.authorizer?.jwt?.claims?.sub;
     const cveIdInput = event?.pathParameters?.id;
 
     if (!userId) {
