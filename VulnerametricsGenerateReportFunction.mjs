@@ -378,23 +378,19 @@ function extractRelevantNvdData(vulnerabilityData) {
  * Prepares Bedrock prompt, now excluding CVSS v2 info.
  */
 function prepareBedrockPrompt(relevantNvdData) {
-  console.log("Preparing prompt for Bedrock (Focusing on CVSS v3)...");
-
-  // Construct summary, EXCLUDING cvssV2
   const nvdSummaryForPrompt = {
     id: relevantNvdData.id,
     description: relevantNvdData.description,
     published: relevantNvdData.published,
     lastModified: relevantNvdData.lastModified,
     status: relevantNvdData.vulnStatus,
-    cvssV3: relevantNvdData.cvssV3 // Only include V3 data if present
+    cvssV3: relevantNvdData.cvssV3
       ? {
           score: relevantNvdData.cvssV3.baseScore,
           severity: relevantNvdData.cvssV3.baseSeverity,
           vector: relevantNvdData.cvssV3.vectorString,
         }
-      : null, // Explicitly null if no V3 data
-    // cvssV2 field removed
+      : null,
     cwe: relevantNvdData.cwe,
     cisaKnownExploited: relevantNvdData.cisaKnownExploited,
   };
@@ -407,25 +403,14 @@ function prepareBedrockPrompt(relevantNvdData) {
 "blind_spots": "string"
 }`;
 
-  const bedrockPrompt = `You are a specialized AI cybersecurity agent. Your task is to analyze the provided National Vulnerability Database (NVD) summary for ${
-    relevantNvdData.id
-  } and generate a comprehensive, objective, critical, and coherent vulnerability report. Focus on providing professional, actionable insights.
+  return `Analyze the following CVE summary and generate a concise, professional vulnerability report in the specified JSON format. Focus on actionable insights, avoid generic statements, and do not include exploit code.
 
-Analyze the following NVD summary:
-\`\`\`json
+CVE summary:
 ${JSON.stringify(nvdSummaryForPrompt, null, 2)}
-\`\`\`
 
-Generate a response conforming *exactly* to the JSON structure specified below. Populate each field with detailed, professional-level text suitable for a cybersecurity report. Ensure the exploitation and mitigation sections are objective and describe general mechanisms rather than providing direct exploit code or overly specific commands.
-
-Desired JSON structure:
-\`\`\`json
+Respond ONLY with a valid JSON object in this format:
 ${desiredJsonStructure}
-\`\`\`
-
-Respond ONLY with the valid JSON object conforming strictly to the structure requested above. Do not include any introductory text, explanations, apologies, or formatting markers like \`\`\`json before or after the JSON object itself.`;
-
-  return bedrockPrompt;
+`;
 }
 
 // --- Bedrock Invocation (No changes needed here) ---
@@ -525,17 +510,32 @@ async function invokeBedrockAnalysis(prompt) {
 
 // --- PDF Generation Functions ---
 
-// wrapText (No changes needed)
+// Utilidad para reemplazar caracteres problemáticos no soportados por WinAnsi
+function sanitizeTextForPdf(text) {
+  if (!text || typeof text !== "string") return text;
+  // Reemplaza algunos caracteres Unicode comunes no soportados por WinAnsi
+  return text
+    .replace(/≤/g, "<=")
+    .replace(/≥/g, ">=")
+    .replace(/–/g, "-")
+    .replace(/—/g, "-")
+    .replace(/•/g, "*")
+    .replace(/“|”/g, '"')
+    .replace(/‘|’/g, "'")
+    .replace(/…/g, "...")
+    .replace(/[^\x00-\x7F]/g, ""); // Elimina cualquier otro caracter no ASCII
+}
+
+// Modifica wrapText para sanitizar el texto antes de procesar
 function wrapText(text, font, fontSize, maxWidth) {
-  if (!text || typeof font.widthOfTextAtSize !== "function") {
-    // console.warn("wrapText called with invalid text or font object.");
-    return [text || ""];
-  }
-  const cleanedText = String(text)
-    .trim()
-    .replace(/\s*\n\s*/g, " ")
-    .replace(/^- /gm, "")
-    .replace(/ +/g, " ");
+  // Sanitiza el texto antes de procesar
+  const cleanedText = sanitizeTextForPdf(
+    String(text)
+      .trim()
+      .replace(/\s*\n\s*/g, " ")
+      .replace(/^- /gm, "")
+      .replace(/ +/g, " ")
+  );
 
   if (!cleanedText) {
     return [""];
@@ -554,7 +554,6 @@ function wrapText(text, font, fontSize, maxWidth) {
     try {
       testWidth = font.widthOfTextAtSize(testLine, fontSize);
     } catch (e) {
-      // console.warn(`Could not calculate width for text segment: "${testLine.substring(0, 50)}..."`, e);
       testWidth = maxWidth + 1;
     }
 
@@ -570,7 +569,6 @@ function wrapText(text, font, fontSize, maxWidth) {
         try {
           currentWordWidth = font.widthOfTextAtSize(tempWord, fontSize);
         } catch (e) {
-          // console.warn(`Could not calculate width for word part: "${tempWord.substring(0, 50)}..."`, e);
           currentWordWidth = maxWidth + 1;
         }
 
@@ -588,7 +586,6 @@ function wrapText(text, font, fontSize, maxWidth) {
               fontSize
             );
           } catch (e) {
-            // console.warn(`Could not calculate width during split check: "${tempWord.substring(0, i)}..."`, e);
             subWidth = maxWidth + 1;
           }
           if (subWidth > maxWidth) {
@@ -605,7 +602,6 @@ function wrapText(text, font, fontSize, maxWidth) {
             break;
           }
         } catch (e) {
-          // console.warn(`Could not calculate width for remaining part: "${tempWord.substring(0, 50)}..."`, e);
           lines.push(tempWord);
           currentLine = "";
           break;
@@ -1554,6 +1550,8 @@ export const handler = async (event, context) => {
   const requestId = context?.awsRequestId || "N/A";
   console.log(`--- Lambda Invocation Start (RequestId: ${requestId}) ---`);
 
+  const timeStart = Date.now();
+
   const corsHeaders = {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
     "Access-Control-Allow-Credentials": "true",
@@ -1569,6 +1567,8 @@ export const handler = async (event, context) => {
   let userId = null;
   try {
     validateEnvironmentVariables();
+    const t0 = Date.now();
+
     userId = event?.requestContext?.authorizer?.claims?.sub || event?.requestContext?.authorizer?.jwt?.claims?.sub;
     const cveIdInput = event?.pathParameters?.id;
     if (!userId) throw { statusCode: 403, message: "Forbidden: User identifier missing or invalid token." };
@@ -1576,26 +1576,61 @@ export const handler = async (event, context) => {
     const cveId = cveIdInput.toUpperCase();
 
     // Parallelize all possible async operations
+    const t1 = Date.now();
     const [nvdApiKey, logoBytes, hasCredits] = await Promise.all([
       getNvdApiKey(),
       getLogoBytes(),
       checkUserCredits(userId)
     ]);
+    const t2 = Date.now();
+    console.log(`[TIMER] getNvdApiKey + getLogoBytes + checkUserCredits: ${t2 - t1} ms`);
+
     if (!hasCredits) throw { statusCode: 402, message: "Payment Required: Insufficient credits to generate report." };
 
+    const t3 = Date.now();
     const rawVulnerabilityData = await fetchNvdData(cveId, nvdApiKey);
+    const t4 = Date.now();
+    console.log(`[TIMER] fetchNvdData: ${t4 - t3} ms`);
+
+    const t5 = Date.now();
     const relevantNvdData = extractRelevantNvdData(rawVulnerabilityData);
+    const t6 = Date.now();
+    console.log(`[TIMER] extractRelevantNvdData: ${t6 - t5} ms`);
+
+    const t7 = Date.now();
     const bedrockPrompt = prepareBedrockPrompt(relevantNvdData);
+    const t8 = Date.now();
+    console.log(`[TIMER] prepareBedrockPrompt: ${t8 - t7} ms`);
+
+    const t9 = Date.now();
     const bedrockAnalysisData = await invokeBedrockAnalysis(bedrockPrompt);
+    const t10 = Date.now();
+    console.log(`[TIMER] invokeBedrockAnalysis: ${t10 - t9} ms`);
+
+    const t11 = Date.now();
     await decrementUserCredits(userId);
+    const t12 = Date.now();
+    console.log(`[TIMER] decrementUserCredits: ${t12 - t11} ms`);
+
+    const t13 = Date.now();
     const pdfBytes = await generatePdfReport(
       bedrockAnalysisData,
       cveId,
       relevantNvdData
     );
+    const t14 = Date.now();
+    console.log(`[TIMER] generatePdfReport: ${t14 - t13} ms`);
+
+    const t15 = Date.now();
     const timestamp = Date.now();
     const s3Key = `${REPORT_S3_PREFIX}${cveId}-${userId}-${timestamp}.pdf`;
     await uploadReportToS3(pdfBytes, s3Key);
+    const t16 = Date.now();
+    console.log(`[TIMER] uploadReportToS3: ${t16 - t15} ms`);
+
+    const totalTime = Date.now() - timeStart;
+    console.log(`[TIMER] TOTAL Lambda execution: ${totalTime} ms`);
+
     const successBody = {
       message: "Report generated successfully.",
       reportKey: s3Key,
