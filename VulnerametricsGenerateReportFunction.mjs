@@ -33,9 +33,9 @@ const CVE_REGEX = /^CVE-\d{4}-\d{4,}$/i;
 const REPORT_S3_PREFIX = "generated-reports/";
 const LOGO_FILE_NAME = "vulnerametrics-logo-bw.png"; // Keep logo as requested
 
-const DISCLAIMER_TEXT = `Disclaimer: The information provided herein may be wrong and is for educational, research, and defensive purposes only. Any attempt to exploit vulnerabilities without proper authorization is illegal and unethical.`;
+const DISCLAIMER_TEXT = `Disclaimer: the information provided herein may be wrong and is for educational, research, and defensive purposes only. Any attempt to exploit vulnerabilities without proper authorization is illegal and unethical.`;
 const FOOTER_TEXT =
-  "vulnerametrics.com was made by Miguel Cordero Pamphile => miguelcorderopamphile@gmail.com";
+  "VulneraMetrics was made by Miguel Cordero Pamphile => miguelcorderopamphile@gmail.com";
 const NVD_RETRY_ATTEMPTS = 1;
 const NVD_RETRY_DELAY_MS = 200;
 const CACHE_DURATION_MS = 5 * 60 * 1000;
