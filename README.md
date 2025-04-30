@@ -5,6 +5,8 @@ The development of the released version started in 03/2025 only by [Miguel Corde
 [FRONTEND DOCUMENTATION](https://github.com/manifest0TB/vulnerametrics/blob/main/README.md)
 
 [API DOCUMENTATION](https://github.com/manifest0TB/vulnerametrics/blob/main/vulnerametricsAPI.md)
+
+
 ## Main goal:
 
 Release a Minimum Value Product with a search engine to find and select single vulnerabilities (CVE) from NVD and generate a Vulnerability Report through Claude 3.7 Sonnet inference in Amazon Bedrock.
