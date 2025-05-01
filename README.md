@@ -2,6 +2,8 @@
 
 The development of the released version started in 03/2025 only by [Miguel Cordero Pamphile](https://www.linkedin.com/in/miguelcorderopamphile/).
 
+[VIDEO DEMO](https://www.youtube.com/watch?v=YjAohW8jGYM)
+
 [FRONTEND DOCUMENTATION](https://github.com/manifest0TB/vulnerametrics/blob/main/README.md)
 
 [API DOCUMENTATION](https://github.com/manifest0TB/vulnerametrics/blob/main/vulnerametricsAPI.md)
