@@ -231,11 +231,11 @@ Vulnerametrics is a security SaaS tool that generates detailed reports on specif
 ### Phase 9: Finalization
 
 * **Document Architecture**
-    * Generate architecture diagrams with Workload Discovery.
+    * Make a diagram of the architecture manually.
     * Document API specifications (endpoints, request/response formats, auth).
 * **Configure Cost Alerts**
     * Set up billing alerts in AWS Budgets.
     * Configure budget notifications.
-* **Hardening Post-Release:**
+* **To do: Hardening Post-Release:**
     * Implement TTL (Time To Live) for free credits in DynamoDB `dynamodb-user-credits-table` table using an `expirationTimestamp` attribute, setting credits to expire 24 hours after being granted.
     * Review CIS AWS Foundations Benchmark v1.2.0.
