@@ -1,6 +1,6 @@
 # vulnerametrics
 
-The development of the released version started in 03/2025 only by [Miguel Cordero Pamphile](https://www.linkedin.com/in/miguelcorderopamphile/).
+The development of the released version started in 02/2025 only by [Miguel Cordero Pamphile](https://www.linkedin.com/in/miguelcorderopamphile/).
 
 [VIDEO DEMO](https://www.youtube.com/watch?v=YjAohW8jGYM)
 
